@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Stroik</title>
+<link rel="manifest" href="manifest.webmanifest">
+<!-- apple-touch-icon musi zostać mimo manifestu: iOS bierze z niego ikonę
+     ekranu głównego, a obrazek startowy w ogóle bez niego nie działa. -->
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Stroik">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#e8e9e4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#13171a" media="(prefers-color-scheme: dark)">
+<style>
+/* Układ: jedna kolumna — pasek stanu → miernik centów → odczyt → struny → sterowanie dźwiękiem */
+:root{
+  --bg:#e8e9e4;
+  --panel:#f8f8f5;
+  --panel-2:#edefe9;
+  --ink:#1b211d;
+  --ink-dim:#6c746d;
+  --line:#d0d4cc;
+  --accent:#b05d22;
+  --ok:#2d8759;
+  --warn:#c0871b;
+  --off:#b2452f;
+  --shadow:0 1px 2px rgba(27,33,29,.07), 0 10px 28px rgba(27,33,29,.06);
+  /* Typografia wyłącznie systemowa: zero zapytań sieciowych, więc plik działa
+     identycznie offline. Kontrast buduje para bezszeryfowa / maszynowa, nie
+     dwa pobierane kroje. */
+  --font-display: ui-sans-serif, -apple-system, "Segoe UI Variable Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --r:14px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#13171a;
+    --panel:#1c2125;
+    --panel-2:#242a2f;
+    --ink:#e6eae7;
+    --ink-dim:#929b97;
+    --line:#333a40;
+    --accent:#df8b3d;
+    --ok:#4cc38a;
+    --warn:#dfb242;
+    --off:#df705c;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#13171a;
+  --panel:#1c2125;
+  --panel-2:#242a2f;
+  --ink:#e6eae7;
+  --ink-dim:#929b97;
+  --line:#333a40;
+  --accent:#df8b3d;
+  --ok:#4cc38a;
+  --warn:#dfb242;
+  --off:#df705c;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--font-mono);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{
+  max-width:760px;
+  margin:0 auto;
+  /* Wcięcia bezpieczne: na iPhonie z wcięciem w ekranie i paskiem gestu treść
+     musi trzymać się z dala od obu, inaczej w trybie pełnoekranowym pierwszy
+     wiersz chowa się pod zegarkiem, a ostatni przycisk pod paskiem. */
+  padding-left:max(16px, env(safe-area-inset-left));
+  padding-right:max(16px, env(safe-area-inset-right));
+  padding-top:calc(20px + env(safe-area-inset-top));
+  padding-bottom:calc(40px + env(safe-area-inset-bottom));
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+
+/* ---- nagłówek ---- */
+.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+h1{
+  font-family:var(--font-display);
+  font-weight:800;
+  font-size:clamp(28px,6vw,40px);
+  letter-spacing:-.02em;
+  margin:0;
+  line-height:1;
+  text-wrap:balance;
+}
+.sub{color:var(--ink-dim);font-size:12px;margin:6px 0 0}
+.top-actions{display:flex;gap:8px;align-items:center}
+
+button{font:inherit;color:inherit;cursor:pointer}
+/* Zachowanie dotyku. touch-action blokuje podwójne stuknięcie powiększające,
+   przez które co drugie szarpnięcie struny kończyło się zoomem zamiast
+   dźwiękiem. Wyłączone zaznaczanie i podświetlenie stuknięcia usuwają dwa
+   odruchy przeglądarki, które na przyciskach wyglądają jak usterka. */
+button, .string, select, label.lbl{
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
+  -webkit-user-select:none;
+  user-select:none;
+}
+/* Pola formularza poniżej 16px wymuszają na iOS automatyczne przybliżenie
+   przy dotknięciu, z którego strona już nie wraca. */
+select, input[type=number]{font-size:16px}
+.btn{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:9px 14px;
+  font-size:13px;
+  font-weight:500;
+  transition:background .15s, border-color .15s, transform .05s;
+}
+.btn:hover{background:var(--panel-2)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.06);background:var(--accent)}
+.btn.ghost{background:transparent}
+.btn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---- panele ---- */
+.panel{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  box-shadow:var(--shadow);
+  padding:18px;
+}
+.panel-flat{box-shadow:none;background:var(--panel-2)}
+
+/* ---- pasek konfiguracji ---- */
+.config{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+label.lbl{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-dim);font-weight:600}
+select,input[type=number]{
+  font:inherit;font-size:13px;
+  background:var(--panel-2);
+  color:var(--ink);
+  border:1px solid var(--line);
+  border-radius:9px;
+  padding:8px 9px;
+  width:100%;
+  min-width:0;
+}
+
+/* ---- miernik ---- */
+.gauge{display:flex;flex-direction:column;gap:14px}
+.gauge-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:11px;color:var(--ink-dim);letter-spacing:.06em;text-transform:uppercase;font-weight:600}
+.meter{
+  position:relative;
+  height:92px;
+  border-radius:10px;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  overflow:hidden;
+}
+.band{position:absolute;top:0;bottom:0;pointer-events:none}
+.band.close{left:40%;right:40%;background:color-mix(in srgb, var(--warn) 12%, transparent)}
+.band.exact{left:47%;right:47%;background:color-mix(in srgb, var(--ok) 20%, transparent);border-left:1px solid color-mix(in srgb, var(--ok) 45%, transparent);border-right:1px solid color-mix(in srgb, var(--ok) 45%, transparent)}
+.tick{position:absolute;top:0;width:1px;background:var(--line);transform:translateX(-50%)}
+.tick.minor{height:12px}
+.tick.major{height:22px;background:var(--ink-dim);opacity:.6}
+.tick-lbl{position:absolute;top:26px;transform:translateX(-50%);font-size:10px;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.needle{
+  position:absolute;
+  bottom:0;
+  height:58px;
+  width:4px;
+  border-radius:2px;
+  background:var(--accent);
+  transform:translateX(-50%);
+  left:50%;
+  transition:background .18s;
+}
+.needle::after{
+  content:"";
+  position:absolute;
+  left:50%;top:-7px;
+  width:14px;height:14px;
+  border-radius:50%;
+  background:inherit;
+  transform:translateX(-50%);
+}
+.meter.idle .needle{opacity:.28}
+.dirs{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-dim);letter-spacing:.04em}
+
+/* ---- odczyt ---- */
+.readout{display:grid;grid-template-columns:auto 1fr;gap:18px;align-items:center}
+.note{
+  font-family:var(--font-display);
+  font-weight:800;
+  font-size:clamp(56px,16vw,92px);
+  line-height:.9;
+  letter-spacing:-.03em;
+  min-width:2.4ch;
+  font-variant-numeric:tabular-nums;
+}
+.note .oct{font-size:.4em;vertical-align:super;font-weight:400;color:var(--ink-dim);margin-left:.05em}
+/* Kreska zastępcza w stanie spoczynku. Pełną mocą koloru i grubością czcionki
+   wygląda jak pasek, który się tam zabłąkał, a nie jak brak odczytu. */
+.note.empty{color:var(--ink-dim);opacity:.35;font-weight:400}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:10px;min-width:0}
+.stat{display:flex;flex-direction:column;gap:2px;min-width:0}
+.stat .k{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim);font-weight:600}
+.stat .v{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.verdict{font-size:13px;font-weight:600;letter-spacing:.02em}
+.sig{height:4px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:6px}
+.sig i{display:block;height:100%;width:0;background:var(--ink-dim);transition:width .12s linear}
+
+/* ---- struny ---- */
+.strings{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:10px}
+.string{
+  display:flex;flex-direction:column;gap:2px;align-items:flex-start;
+  background:var(--panel-2);
+  border:1px solid var(--line);
+  border-radius:11px;
+  padding:11px 12px;
+  text-align:left;
+  min-width:0;
+  transition:border-color .15s, background .15s, transform .05s;
+}
+.string:hover{border-color:var(--accent)}
+.string:active{transform:translateY(1px)}
+.string .num{font-size:10px;color:var(--ink-dim);letter-spacing:.08em;font-weight:600}
+.string .nm{font-family:var(--font-display);font-size:24px;font-weight:700;line-height:1.1}
+.string .hz{font-size:11px;color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.string.target{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 12%, var(--panel-2))}
+.string.sounding{border-color:var(--ok);background:color-mix(in srgb, var(--ok) 16%, var(--panel-2))}
+
+.row{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+.hint{font-size:12px;color:var(--ink-dim);margin:0}
+.notice{
+  border-left:3px solid var(--accent);
+  padding:10px 13px;
+  background:var(--panel-2);
+  border-radius:0 9px 9px 0;
+  font-size:12.5px;
+}
+.notice.err{border-color:var(--off)}
+h2{font-family:var(--font-display);font-size:15px;font-weight:700;margin:0 0 10px;letter-spacing:-.01em}
+ul.notes{margin:0;padding-left:18px;font-size:12.5px;color:var(--ink-dim);display:flex;flex-direction:column;gap:5px}
+ul.notes b{color:var(--ink);font-weight:600}
+
+@media (max-width:480px){
+  /* justify-items:stretch, nie start — inaczej blok danych kurczy się do
+     własnej zawartości i cztery pozycje układają się w pionie zamiast
+     wypełnić szerokość w trzech kolumnach. */
+  .readout{grid-template-columns:1fr;gap:10px;justify-items:stretch}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .meter{height:96px}
+  .wrap{gap:14px}
+  .panel{padding:15px}
+  /* Struny na dwie kolumny i wyraźnie wyższe: w telefonie trafia się w nie
+     kciukiem, często jedną ręką trzymającą instrument. 64 px to minimum,
+     przy którym trafienie jest pewne. */
+  .strings{grid-template-columns:repeat(2,1fr);gap:9px}
+  .string{min-height:64px;justify-content:center;padding:10px 12px}
+  .string .nm{font-size:26px}
+  .btn{padding:12px 15px}
+  /* Pasek sterowania dźwiękiem: przyciski rozciągnięte, żeby wypełniły wiersz
+     zamiast zostawiać wąskie paski trudne do trafienia. */
+  .row .btn{flex:1 1 auto;min-width:0;text-align:center}
+  .note{font-size:clamp(52px,19vw,88px)}
+  h1{font-size:30px}
+  /* Kolejność paneli na telefonie. Na biurku wszystko widać naraz, tu widać
+     jeden ekran: najpierw to, na co się patrzy w trakcie strojenia (miernik),
+     potem to, co się naciska (struny), a wybór instrumentu i pomoc schodzą
+     niżej, bo sięga się do nich raz na jakiś czas. */
+  .wrap{display:flex;flex-direction:column}
+  .top{order:1}
+  #p-gauge{order:2}
+  #p-strings{order:3}
+  #p-config{order:4}
+  #p-help{order:5}
+  /* Nagłówek miernika nie mieści się w jednym wierszu — układamy w kolumnie,
+     zamiast pozwolić obu podpisom wejść na siebie. */
+  .gauge-head{flex-direction:column;align-items:flex-start;gap:2px}
+}
+@media (prefers-reduced-motion: reduce){
+  *{transition-duration:.01ms !important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div>
+      <h1>Stroik</h1>
+      <p class="sub">Ukulele · mandolina · gitara · bas — pomiar z mikrofonu i wzorcowe dźwięki</p>
+    </div>
+    <div class="top-actions">
+      <button class="btn ghost" id="theme" title="Jasny / ciemny">◐</button>
+      <button class="btn primary" id="mic">Włącz mikrofon</button>
+    </div>
+  </div>
+
+  <div class="panel" id="p-config">
+    <div class="config">
+      <div class="field">
+        <label class="lbl" for="inst">Instrument</label>
+        <select id="inst"></select>
+      </div>
+      <div class="field">
+        <label class="lbl" for="tun">Strój</label>
+        <select id="tun"></select>
+      </div>
+      <div class="field">
+        <label class="lbl" for="mode">Cel pomiaru</label>
+        <select id="mode">
+          <option value="auto" id="opt-auto">Automatyczny (najbliższa struna)</option>
+          <option value="manual" id="opt-manual">Wybrana struna</option>
+          <option value="chromatic">Chromatyczny</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="lbl" for="a4">Kamerton A4 (Hz)</label>
+        <input type="number" id="a4" min="392" max="466" step="0.5" value="440">
+      </div>
+    </div>
+  </div>
+
+  <div class="panel gauge" id="p-gauge">
+    <div class="gauge-head">
+      <span id="target-lbl">Cel: —</span>
+      <span id="clar-lbl">odchyłka w centach</span>
+    </div>
+    <div class="meter idle" id="meter">
+      <div class="band close"></div>
+      <div class="band exact"></div>
+      <div id="ticks"></div>
+      <div class="needle" id="needle"></div>
+    </div>
+    <div class="dirs"><span>♭ za nisko</span><span>strojone</span><span>za wysoko ♯</span></div>
+
+    <div class="readout">
+      <div class="note" id="note">—</div>
+      <div class="stats">
+        <div class="stat"><span class="k">Częstotliwość</span><span class="v" id="hz">— Hz</span></div>
+        <div class="stat"><span class="k">Odchyłka</span><span class="v" id="cents">— ct</span></div>
+        <div class="stat"><span class="k">Wzorzec</span><span class="v" id="thz">— Hz</span></div>
+        <div class="stat"><span class="k">Ocena</span><span class="v verdict" id="verdict">bezczynny</span></div>
+      </div>
+    </div>
+    <div class="sig"><i id="sig"></i></div>
+    <div id="status" class="notice" hidden></div>
+  </div>
+
+  <div class="panel" id="p-strings">
+    <h2>Dźwięki wzorcowe</h2>
+    <p class="hint" id="strings-hint">Dotknij struny, żeby usłyszeć wzorzec. Z klawiaturą to samo robią klawisze numeryczne. Jeśli najniższe struny basu są ledwo słyszalne, to kres pasma głośnika, nie błąd — włącz „Oktawa: +1”, dudnienia słychać wtedy tak samo dobrze.</p>
+    <div class="strings" id="strings"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn" id="seq">Zagraj wszystkie struny</button>
+      <button class="btn" id="stop">Zatrzymaj dźwięk</button>
+      <button class="btn" id="tone-mode" aria-pressed="false">Tryb: szarpnięcie</button>
+      <button class="btn" id="oct">Oktawa: jak struna</button>
+      <button class="btn" id="vol-down">−</button>
+      <button class="btn" id="vol-up">+</button>
+      <span class="hint" id="vol-lbl">głośność 60%</span>
+    </div>
+  </div>
+
+  <div class="panel panel-flat" id="p-help">
+    <h2>Jak stroić</h2>
+    <ul class="notes">
+      <li><b>Słuchem:</b> zagraj wzorzec, potem tę samą strunę na instrumencie. Dopóki słychać pulsowanie (bicie dudnień), struny są rozstrojone — pulsowanie zwalnia i zanika, gdy wysokości się zrównują.</li>
+      <li><b>Mikrofonem:</b> szarp jedną strunę, poczekaj aż wskaźnik się uspokoi. Zielone pole to ±3 centy, czyli próg praktycznie niesłyszalny.</li>
+      <li><b>Mandolina:</b> każda para strun stroi się osobno, struna po strunie — wycisz palcem sąsiednią, żeby stroik nie uśredniał obu naraz. Dopiero gdy obie zgadzają się z celem, zagraj je razem: jeśli słychać pulsowanie, para rozjeżdża się o ułamek centa i trzeba poprawić tę, którą dociągałeś jako drugą. Wysokie E5 (659 Hz) reaguje na kołek najgwałtowniej z całego instrumentu — przy mechanizmie bez przekładni rusz go naprawdę minimalnie.</li>
+      <li><b>Zawsze dostrajaj od dołu:</b> zjedź kołkiem poniżej celu i dociągnij w górę — luz w mechanizmie nie cofnie wtedy stroju.</li>
+      <li><b>Sprzężenie:</b> przy włączonym mikrofonie i głośnikach stroik usłyszy własny wzorzec. Analiza jest wstrzymywana na czas odtwarzania, ale ze słuchawkami pracuje się wygodniej.</li>
+      <li><b>Bas:</b> najniższe struny (E1 ≈ 41 Hz, H0 ≈ 31 Hz) potrzebują około sekundy wybrzmienia, zanim odczyt się ustabilizuje. Graj przy progu 12. i porównuj oktawę, jeśli odczyt skacze.</li>
+      <li><b>Nie słychać wzorca:</b> sprawdź boczny przełącznik wyciszenia iPhone'a — w pozycji cichej wycisza także dźwięk ze stron. Głośność ustawia się przyciskami telefonu, niezależnie od suwaka w aplikacji.</li>
+      <li><b>Ekran nie gaśnie</b> przy włączonym mikrofonie, żeby wskazówka była widoczna, gdy obie ręce są zajęte kołkiem. Po wyłączeniu mikrofonu telefon wraca do normalnego wygaszania.</li>
+      <li><b>Niskie wzorce a głośniki:</b> membrana laptopa czy telefona przestaje przenosić w okolicach 150–200 Hz, więc wzorzec E1 i A1 jest tam cichy z fizyki, nie z błędu. Wzorce poniżej 80 Hz mają dlatego energię przesuniętą na wyższe harmoniczne — ucho odtwarza z nich właściwą wysokość. Na słuchawkach albo kolumnie z głośnikiem niskotonowym usłyszysz pełny dźwięk; na małym głośniku pewniejsza jest „Oktawa: +1”.</li>
+    </ul>
+  </div>
+
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ====================== model muzyczny ====================== */
+const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+/* Każda struna opisana numerem MIDI, nie częstotliwością. Dzięki temu zmiana
+   kamertonu A4 (392–466 Hz, czyli od stroju barokowego po orkiestrowe 443–446 Hz)
+   przelicza cały zestaw jedną formułą, bez tablicy stałych do aktualizacji. */
+const midiToHz = (m, a4) => a4 * Math.pow(2, (m - 69) / 12);
+const hzToMidi = (f, a4) => 69 + 12 * Math.log2(f / a4);
+const noteOf = m => ({ name: NAMES[((m % 12) + 12) % 12], oct: Math.floor(m / 12) - 1 });
+
+const s = (name, midi) => ({ name, midi });
+
+const INSTRUMENTS = {
+  ukulele: {
+    label: "Ukulele",
+    tunings: {
+      gcea:    { label: "GCEA — sopranowe / koncertowe / tenorowe", strings: [s("G",67), s("C",60), s("E",64), s("A",69)] },
+      gceaLow: { label: "GCEA z niskim G (low-G)",                  strings: [s("G",55), s("C",60), s("E",64), s("A",69)] },
+      dgbe:    { label: "DGBE — barytonowe",                        strings: [s("D",50), s("G",55), s("B",59), s("E",64)] },
+      adfb:    { label: "ADF#B — strój D",                          strings: [s("A",69), s("D",62), s("F#",66), s("B",71)] }
+    }
+  },
+  /* Mandolina i jej rodzina mają struny chórowe: każda „struna" to para
+     zestrojona unisono (w mandoceli i oktawowej bywa oktawowo). Stąd flaga
+     courses — zmienia nazewnictwo w interfejsie ze „struny" na „parę", bo
+     stroi się obie struny pary do jednej wysokości. */
+  mandolin: {
+    label: "Mandolina",
+    courses: true,
+    tunings: {
+      gdae:    { label: "GDAE — standard (jak skrzypce)",   strings: [s("G",55), s("D",62), s("A",69), s("E",76)] },
+      gdgd:    { label: "GDGD — strój krzyżowy (old-time)", strings: [s("G",55), s("D",62), s("G",67), s("D",74)] },
+      mandola: { label: "CGDA — mandola altowa",            strings: [s("C",48), s("G",55), s("D",62), s("A",69)] },
+      octave:  { label: "GDAE — mandolina oktawowa",        strings: [s("G",43), s("D",50), s("A",57), s("E",64)] },
+      cello:   { label: "CGDA — mandocela",                 strings: [s("C",36), s("G",43), s("D",50), s("A",57)] }
+    }
+  },
+  guitar: {
+    label: "Gitara (6 strun)",
+    tunings: {
+      standard: { label: "EADGBE — standard",        strings: [s("E",40), s("A",45), s("D",50), s("G",55), s("B",59), s("E",64)] },
+      dropd:    { label: "DADGBE — drop D",          strings: [s("D",38), s("A",45), s("D",50), s("G",55), s("B",59), s("E",64)] },
+      halfdown: { label: "E♭A♭D♭G♭B♭E♭ — pół tonu niżej", strings: [s("E♭",39), s("A♭",44), s("D♭",49), s("G♭",54), s("B♭",58), s("E♭",63)] },
+      dadgad:   { label: "DADGAD",                   strings: [s("D",38), s("A",45), s("D",50), s("G",55), s("A",57), s("D",62)] },
+      openg:    { label: "DGDGBD — open G",          strings: [s("D",38), s("G",43), s("D",50), s("G",55), s("B",59), s("D",62)] }
+    }
+  },
+  bass: {
+    label: "Gitara basowa",
+    tunings: {
+      standard: { label: "EADG — 4 struny",          strings: [s("E",28), s("A",33), s("D",38), s("G",43)] },
+      dropd:    { label: "DADG — drop D",            strings: [s("D",26), s("A",33), s("D",38), s("G",43)] },
+      five:     { label: "HEADG — 5 strun",          strings: [s("H",23), s("E",28), s("A",33), s("D",38), s("G",43)] },
+      halfdown: { label: "E♭A♭D♭G♭ — pół tonu niżej", strings: [s("E♭",27), s("A♭",32), s("D♭",37), s("G♭",42)] }
+    }
+  }
+};
+
+/* ====================== stan ====================== */
+const S = {
+  a4: 440,
+  inst: "guitar",
+  tuning: "standard",
+  mode: "auto",
+  selected: 0,
+  toneSustain: false,
+  octave: 0,
+  volume: 0.6,
+  running: false,
+  freq: 0, clarity: 0, rms: 0,
+  lastGood: 0,
+  shownCents: 0,
+  target: null,
+  history: []
+};
+
+const $ = id => document.getElementById(id);
+const el = {
+  mic: $("mic"), inst: $("inst"), tun: $("tun"), mode: $("mode"), a4: $("a4"),
+  meter: $("meter"), needle: $("needle"), ticks: $("ticks"),
+  note: $("note"), hz: $("hz"), cents: $("cents"), thz: $("thz"), verdict: $("verdict"),
+  sig: $("sig"), status: $("status"), strings: $("strings"), targetLbl: $("target-lbl"),
+  seq: $("seq"), stop: $("stop"), toneMode: $("tone-mode"), oct: $("oct"), volLbl: $("vol-lbl"),
+  volUp: $("vol-up"), volDown: $("vol-down"), theme: $("theme")
+};
+
+const currentStrings = () => INSTRUMENTS[S.inst].tunings[S.tuning].strings;
+/* Instrumenty chórowe (mandolina) mówią o parach, nie o strunach. Obie formy
+   są rodzaju żeńskiego, więc podstawiają się w te same zdania bez przeróbek. */
+const unitName = () => INSTRUMENTS[S.inst].courses ? "para" : "struna";
+
+/* ====================== detekcja wysokości (NSDF / McLeod) ====================== */
+/* Granice szukanego okresu.
+   MIN_F = 27 Hz: najniższa realna struna to H0 basu pięciostrunowego (30,87 Hz),
+   margines 12% pozwala ją znaleźć nawet przy rozstrojeniu o dwa półtony w dół.
+   MAX_F = 1320 Hz: E6 to 1318,5 Hz — 24. próg pierwszej struny gitary, czyli
+   najwyższy dźwięk, jaki ktokolwiek poda stroikowi. Wyżej szukamy już tylko
+   harmonicznych, więc zawężenie zakresu wprost zmniejsza ryzyko błędu oktawowego. */
+const MIN_F = 27.0;
+const MAX_F = 1320.0;
+/* Granica zaufania do siatki zdecymowanej. Po decymacji 4× przy 48 kHz jedna
+   próbka opóźnienia to 12 kHz; okres dźwięku 1318 Hz zajmuje tam tylko 9,1
+   próbki i wyszukiwanie wierzchołków nie ma czego szukać — łapie okres dwa
+   razy dłuższy i podaje dźwięk o oktawę za nisko. Przy 700 Hz okres ma 17
+   próbek, co jest już bezpieczne. Wszystko powyżej tej granicy znajdowane
+   jest jako połowa okresu i prostowane testem oktawowym poniżej. */
+const SPLIT_F = 700.0;
+
+function nsdfAt(x, tau) {
+  /* Korelacja liczona najwyżej na 20 okresach szukanego dźwięku, ale nie mniej
+     niż na 4096 próbkach. Dla krótkich okresów — a te są najdroższe, bo pętla
+     przebiega wtedy niemal całe okno — 20 okresów w zupełności wystarcza na
+     stabilny wynik, a liczenie na pełnych 8192 próbkach kosztuje dwa razy
+     więcej bez żadnego zysku. Dla basu, gdzie okres sięga 1500 próbek, limit
+     nigdy się nie uruchamia i korelacja idzie po całym oknie. */
+  const N = Math.min(x.length - tau, Math.max(4096, 20 * tau));
+  let r = 0, m = 0;
+  for (let j = 0; j < N; j++) { const a = x[j], b = x[j + tau]; r += a * b; m += a * a + b * b; }
+  return m > 0 ? (2 * r) / m : 0;
+}
+
+function detect(buf, sr) {
+  const n = buf.length;
+  let sum = 0, sq = 0;
+  for (let i = 0; i < n; i++) { sum += buf[i]; sq += buf[i] * buf[i]; }
+  const rms = Math.sqrt(sq / n);
+  /* Próg 0,004 RMS ≈ −48 dBFS. Szum tła cichego pokoju w mikrofonie laptopa
+     mieści się poniżej 0,002; wybrzmiewająca struna spada tam dopiero po
+     kilku sekundach. Niżej ustawiony próg kosztuje pełne 2–4 ms liczenia
+     na ramkę bez szansy na sensowny wynik. */
+  if (rms < 0.004) return { freq: 0, clarity: 0, rms };
+
+  const mean = sum / n;
+  const x = new Float32Array(n);
+  for (let i = 0; i < n; i++) x[i] = buf[i] - mean;
+
+  /* Decymacja 4×. Bez niej NSDF kosztuje około 1670 opóźnień × 7000 mnożeń
+     = 11,7 mln operacji na ramkę, czyli ponad 30 ms — za wolno przy 20 Hz
+     odświeżania. Po decymacji zostaje 2048 próbek przy 12 kHz i 418 opóźnień
+     × 1800 mnożeń = 0,75 mln operacji, zmierzone 2–4 ms na ramkę.
+     Uśrednienie czterech sąsiednich próbek działa jak filtr antyaliasingowy,
+     a sygnał i tak przeszedł przez dolnoprzepustowy 1500 Hz — przy nowej
+     częstotliwości Nyquista 6 kHz nie ma czego zawinąć. */
+  const D = 4, dn = (n / D) | 0;
+  const d = new Float32Array(dn);
+  for (let i = 0; i < dn; i++) {
+    const o = i * D;
+    d[i] = (x[o] + x[o + 1] + x[o + 2] + x[o + 3]) * 0.25;
+  }
+  const dsr = sr / D;
+  const minLag = Math.max(2, Math.floor(dsr / SPLIT_F));
+  const maxLag = Math.min(dn - 64, Math.ceil(dsr / MIN_F));
+  if (maxLag <= minLag + 2) return { freq: 0, clarity: 0, rms };
+
+  const nsdf = new Float32Array(maxLag + 2);
+  for (let tau = minLag; tau <= maxLag; tau++) {
+    const N = dn - tau;
+    let r = 0, m = 0;
+    for (let j = 0; j < N; j++) { const a = d[j], b = d[j + tau]; r += a * b; m += a * a + b * b; }
+    nsdf[tau] = m > 0 ? (2 * r) / m : 0;
+  }
+
+  const cache = new Map();
+  const val = t => { if (!cache.has(t)) cache.set(t, nsdfAt(x, t)); return cache.get(t); };
+
+  /* Maksima kluczowe: wierzchołki leżące pomiędzy dodatnimi przejściami NSDF
+     przez zero. To sedno metody McLeoda i dwie rzeczy załatwia naraz.
+     Po pierwsze pomija zbocze przy opóźnieniu bliskim zera, gdzie każdy sygnał
+     koreluje sam ze sobą niemal idealnie, a które nie niesie żadnej informacji
+     o okresie. Po drugie dla dźwięku z wytłumioną podstawową zostawia
+     wierzchołek przy okresie rzeczywistym, choć wyższy bywa ten przy drugiej
+     harmonicznej — biorąc potem PIERWSZY wierzchołek powyżej progu, a nie
+     najwyższy, dostajemy oktawę rzeczywistą.
+     Warunek przejścia przez zero jest przy tym nieusuwalny: gdyby wpuścić
+     wierzchołek już trwający na początku okna, sygnał niski zgłosiłby jako
+     wierzchołek własne zbocze zerowe i odczyt poleciałby o oktawy w górę. */
+  const keyMaxima = (at, lo, hi) => {
+    const out = [];
+    let inPos = false, curMax = -2, curTau = -1;
+    for (let tau = lo + 1; tau <= hi; tau++) {
+      const v = at(tau);
+      if (!inPos) {
+        if (v > 0 && at(tau - 1) <= 0) { inPos = true; curMax = v; curTau = tau; }
+      } else if (v <= 0) {
+        if (curTau > 0) out.push(curTau);
+        inPos = false; curMax = -2; curTau = -1;
+      } else if (v > curMax) { curMax = v; curTau = tau; }
+    }
+    if (inPos && curTau > 0) out.push(curTau);
+    return out;
+  };
+
+  /* Okno krótkich opóźnień, liczone w pełnej częstotliwości próbkowania.
+     Zakres SPLIT_F…MAX_F jest dla siatki zdecymowanej za ciasny, a jednocześnie
+     obejmuje realnie używane dźwięki: 12. próg pierwszej pary mandoliny to
+     E6 1318 Hz, 12. próg ukulele A5 880 Hz. Okno obejmuje opóźnienia od
+     sr/MAX_F/2 do sr/SPLIT_F — przy 48 kHz raptem 51 opóźnień, czyli 0,4 ms.
+     Dolna granica to połowa najkrótszego szukanego okresu, więc dla każdego
+     dźwięku z tego zakresu okno zaczyna się w ujemnej części NSDF i przejście
+     przez zero wypada tam, gdzie trzeba. Dla dźwięku niskiego NSDF nie schodzi
+     w tym oknie poniżej zera ani razu, więc nie powstaje żaden wierzchołek
+     i okno milczy — dokładnie tak, jak powinno. */
+  const sLo = Math.max(2, Math.floor(sr / MAX_F / 2));
+  const sHi = Math.min(n - 64, Math.ceil(sr / SPLIT_F));
+  const shortPeaks = sHi > sLo + 2 ? keyMaxima(val, sLo, sHi) : [];
+  const decPeaks = keyMaxima(t => nsdf[t], minLag, maxLag);
+  if (!shortPeaks.length && !decPeaks.length) return { freq: 0, clarity: 0, rms };
+
+  let best = 0;
+  for (const p of shortPeaks) best = Math.max(best, val(p));
+  for (const p of decPeaks) best = Math.max(best, nsdf[p]);
+  /* NSDF jest znormalizowana do zakresu −1…1, więc próg ma sens bezwzględny.
+     0,55 odrzuca szum i stuknięcia (tam najwyższy wierzchołek rzadko przekracza
+     0,3), a przepuszcza zabrudzony, wybrzmiewający dźwięk struny. */
+  if (best < 0.55) return { freq: 0, clarity: 0, rms };
+
+  /* Próg 0,88 najwyższego wierzchołka: poniżej 0,8 stroik zaczyna łapać
+     subharmoniczne (odczyt o oktawę za nisko), powyżej 0,93 gubi oktawę
+     rzeczywistą przy słabej podstawowej i skacze o oktawę w górę.
+     Oba okna przeszukiwane są w kolejności rosnącego okresu, czyli od dźwięków
+     najwyższych — najpierw krótkie opóźnienia z pełnej siatki, potem długie
+     ze zdecymowanej. */
+  const thr = 0.88 * best;
+  let center = -1, span = 0, clarity = 0, fromDec = false;
+  for (const p of shortPeaks) {
+    if (val(p) >= thr) { center = p; span = 2; clarity = val(p); break; }
+  }
+  if (center < 0) {
+    let coarse = -1;
+    for (const p of decPeaks) { if (nsdf[p] >= thr) { coarse = p; break; } }
+    if (coarse < 0) return { freq: 0, clarity: 0, rms };
+    center = coarse * D; span = D * 3; clarity = nsdf[coarse]; fromDec = true;
+  }
+
+  /* Uściślenie w pełnej częstotliwości próbkowania.
+     Po decymacji jedna próbka opóźnienia to przy 330 Hz aż 2,8% okresu, czyli
+     48 centów — bez tego kroku sama interpolacja musiałaby trafiać w 1/50
+     próbki. Przy 48 kHz ta sama próbka to 0,69% okresu, a po interpolacji
+     parabolicznej zmierzony błąd spada poniżej 0,05 centa w całym zakresie.
+     Przeszukiwanie ±3 próbek zdecymowanych (±12 pełnych) z zapasem pokrywa
+     niepewność zgrubnego wyniku. */
+  const refine = (center, span) => {
+    const lo = Math.max(2, center - span), hi = Math.min(n - 64, center + span);
+    if (hi <= lo) return { tau: center, val: -2 };
+    let bTau = lo, bVal = -2;
+    for (let t = lo; t <= hi; t++) { const v = val(t); if (v > bVal) { bVal = v; bTau = t; } }
+    let tau = bTau;
+    if (bTau > lo && bTau < hi) {
+      const y1 = val(bTau - 1), y2 = val(bTau), y3 = val(bTau + 1);
+      const den = y1 - 2 * y2 + y3;
+      if (den !== 0) {
+        const delta = (0.5 * (y1 - y3)) / den;
+        if (Math.abs(delta) < 1) tau = bTau + delta;
+      }
+    }
+    return { tau, val: bVal };
+  };
+
+  let r = refine(center, span);
+
+  /* Test oktawowy w górę — siatka bezpieczeństwa dla wyniku ze zdecymowanego
+     okna, które kończy się na SPLIT_F. Sprawdzamy, czy sygnał powtarza się
+     także po połowie znalezionego okresu. Dla dźwięku z obecną podstawową
+     jest to niemożliwe: po połowie okresu pierwsza harmoniczna ma przeciwną
+     fazę i NSDF leci w okolice −1. Wysoko wychodzi tylko wtedy, gdy okres
+     rzeczywiście jest dwa razy krótszy. Próg 0,90 z zapasem omija przypadek
+     wytłumionej podstawowej basu, gdzie NSDF po połowie okresu sięga około
+     0,36 — tam oktawa ma zostać, jak jest. */
+  if (fromDec) {
+    const halfCenter = Math.round(r.tau / 2);
+    if (halfCenter >= 2 && halfCenter >= Math.floor(sr / MAX_F)) {
+      const h = refine(halfCenter, 3);
+      if (h.val >= 0.90 && h.val > r.val - 0.03) r = h;
+    }
+  }
+
+  const freq = sr / r.tau;
+  if (freq < MIN_F || freq > MAX_F) return { freq: 0, clarity: 0, rms };
+  return { freq, clarity: Math.max(clarity, r.val), rms };
+}
+
+/* ====================== wejście audio ====================== */
+let ctx = null, analyser = null, buf = null, stream = null, lastAnalysis = 0;
+/* Analiza wstrzymana na czas grania wzorca. Bez tego stroik przez głośniki
+   mierzy własny dźwięk i zawsze pokazuje 0 centów — błąd, który wygląda jak
+   idealnie nastrojony instrument. Okno blokady: 3,3 s w trybie szarpnięcia,
+   czyli pełne wybrzmienie obwiedni, i bezterminowo w trybie ciągłym. */
+let soundingUntil = 0;
+
+function audioCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === "suspended") ctx.resume();
+  return ctx;
+}
+
+/* Blokada wygaszania ekranu na czas strojenia. Bez niej telefon gaśnie po
+   trzydziestu sekundach, czyli dokładnie wtedy, gdy człowiek kręci kołkiem
+   i patrzy na wskazówkę, nie dotykając ekranu. Interfejs jest dostępny od
+   Safari 16.4, starsze wersje po prostu go nie mają. */
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on) {
+      if (!wakeLock && "wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+    } else if (wakeLock) {
+      await wakeLock.release();
+      wakeLock = null;
+    }
+  } catch (_) { /* odmowa blokady nie jest powodem, żeby przerywać strojenie */ }
+}
+document.addEventListener("visibilitychange", () => {
+  // System zwalnia blokadę przy przejściu w tło; po powrocie trzeba ją wziąć od nowa.
+  if (document.visibilityState === "visible" && S.running) keepAwake(true);
+});
+
+async function startMic() {
+  try {
+    /* Jawna deklaracja rodzaju sesji audio. Bez niej Safari zgaduje kategorię
+       z tego, co strona akurat robi, i potrafi po włączeniu mikrofonu ściszyć
+       albo przekierować wyjście. Interfejs istnieje od iOS 17; ustawiamy go
+       raz, przed otwarciem mikrofonu, i więcej nie ruszamy. */
+    try {
+      if (navigator.audioSession) navigator.audioSession.type = "play-and-record";
+    } catch (_) {}
+    const c = audioCtx();
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
+    });
+    const src = c.createMediaStreamSource(stream);
+    /* Górnoprzepustowy 24 Hz: tnie składową stałą i dudnienie obudowy, a leży
+       o 3 Hz poniżej MIN_F, więc nie rusza H0 basu (30,87 Hz).
+       Dolnoprzepustowy 1500 Hz: zostawia MAX_F z zapasem, a usuwa syk i
+       harmoniczne powyżej ósmej, które najczęściej wciągają detekcję o oktawę
+       za wysoko. Jest też filtrem antyaliasingowym przed decymacją 4×. */
+    const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 24; hp.Q.value = 0.7;
+    const lp = c.createBiquadFilter(); lp.type = "lowpass";  lp.frequency.value = 1500; lp.Q.value = 0.7;
+    analyser = c.createAnalyser();
+    /* Okno 8192 próbek = 171 ms przy 48 kHz (186 ms przy 44,1 kHz).
+       Autokorelacja potrzebuje co najmniej 2–3 pełnych okresów; dla H0 basu
+       (30,87 Hz, okres 1555 próbek) mieści się ich 5, dla E1 (41,2 Hz) — 7.
+       Okno 4096 dałoby dla H0 tylko 2,6 okresu i niestabilny odczyt. */
+    analyser.fftSize = 8192;
+    buf = new Float32Array(analyser.fftSize);
+    src.connect(hp); hp.connect(lp); lp.connect(analyser);
+    S.running = true;
+    keepAwake(true);
+    el.mic.textContent = "Wyłącz mikrofon";
+    el.mic.classList.remove("primary");
+    note("Mikrofon aktywny. Szarpnij pojedynczą strunę i daj jej wybrzmieć.", false);
+  } catch (e) {
+    /* Komunikaty rozdzielone, bo prowadzą do zupełnie różnych działań.
+       Odmowa to kwestia zgody, którą trzeba cofnąć w ustawieniach systemu;
+       brak urządzenia albo niezabezpieczone połączenie to kwestia adresu,
+       spod którego otwarto aplikację. */
+    const name = (e && e.name) ? e.name : "błąd";
+    let why;
+    if (name === "NotAllowedError") {
+      why = "Dostęp do mikrofonu został odrzucony. Na iPhonie: Ustawienia › Safari › " +
+            "Mikrofon, albo przytrzymaj ikonę aplikacji i sprawdź jej uprawnienia. " +
+            "Potem wróć tutaj i spróbuj ponownie.";
+    } else if (!window.isSecureContext) {
+      why = "Przeglądarka nie udostępnia mikrofonu, bo strona została otwarta " +
+            "połączeniem niezabezpieczonym. Mikrofon działa wyłącznie pod adresem " +
+            "zaczynającym się od https://";
+    } else if (name === "NotFoundError") {
+      why = "Nie znaleziono mikrofonu. Odłącz słuchawki albo sprawdź, czy inna " +
+            "aplikacja go nie zajmuje.";
+    } else {
+      why = "Nie udało się otworzyć mikrofonu (" + name + "). Zamknij inne aplikacje " +
+            "korzystające z mikrofonu i spróbuj ponownie.";
+    }
+    note(why, true);
+  }
+}
+
+function stopMic() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; analyser = null; S.running = false; S.history = [];
+  keepAwake(false);
+  el.mic.textContent = "Włącz mikrofon";
+  el.mic.classList.add("primary");
+  note("Mikrofon wyłączony. Dźwięki wzorcowe działają dalej.", false);
+}
+
+function note(msg, isErr) {
+  el.status.hidden = !msg;
+  el.status.textContent = msg || "";
+  el.status.classList.toggle("err", !!isErr);
+}
+
+/* ====================== generator wzorców ====================== */
+let master = null;
+const active = new Map();
+let seqTimer = null;
+
+function masterGain() {
+  const c = audioCtx();
+  if (!master) { master = c.createGain(); master.gain.value = S.volume; master.connect(c.destination); }
+  return master;
+}
+
+/* Barwa wzorca dobierana do wysokości.
+   Czysta sinusoida jest dla ucha złym wzorcem: dudnienia przy rozstrojeniu
+   o 2–3 centy słychać na niej dużo słabiej niż na dźwięku z harmonicznymi,
+   bo bicie zachodzi też między wyższymi składowymi i jest tam n razy szybsze.
+   Przy niskich strunach dochodzi druga sprawa — głośniki laptopów i telefonów
+   mają kres przenoszenia w okolicach 150–200 Hz, więc E1 (41,2 Hz) i A1 (55 Hz)
+   po prostu nie wychodzą z membrany. Rozwiązaniem jest zjawisko brakującej
+   podstawowej: ucho odtwarza wysokość z samego szeregu harmonicznych, jeśli
+   jest on ciągły. Dlatego poniżej 80 Hz energia wzorca jest przesunięta na
+   harmoniczne 4–8 (dla E1 to 165–330 Hz), które przenosi każdy głośnik, a sama
+   podstawowa zostaje tylko jako dodatek dla słuchawek i kolumn. */
+function voicing(f) {
+  if (f >= 150) return { partials: [1, 2, 3, 4, 5],                      amps: [1, 0.46, 0.26, 0.14, 0.07] };
+  if (f >= 80)  return { partials: [1, 2, 3, 4, 5, 6, 7, 8],             amps: [0.85, 1, 0.9, 0.62, 0.42, 0.28, 0.17, 0.10] };
+  return              { partials: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],  amps: [0.5, 0.7, 0.85, 0.95, 1, 1, 0.9, 0.72, 0.55, 0.4, 0.24] };
+}
+
+function playString(idx, opts) {
+  const c = audioCtx();
+  const st = currentStrings()[idx];
+  if (!st) return;
+  if (active.has(idx)) { stopString(idx); if (S.toneSustain) return; }
+
+  const f = midiToHz(st.midi, S.a4) * Math.pow(2, S.octave);
+  const g = c.createGain();
+  const lp = c.createBiquadFilter();
+  lp.type = "lowpass";
+  /* Odcięcie nigdy poniżej 900 Hz. Przy wzorcu E1 (41,2 Hz) stara reguła f × 9
+     dawała 371 Hz i obcinała właśnie te harmoniczne, które jako jedyne są
+     słyszalne na małym głośniku. */
+  lp.frequency.value = Math.min(6000, Math.max(900, f * 13));
+  lp.Q.value = 0.6;
+
+  const { partials, amps } = voicing(f);
+  const oscs = partials.map((p, i) => {
+    const o = c.createOscillator();
+    o.type = "sine";
+    o.frequency.value = f * p;
+    const og = c.createGain();
+    og.gain.value = amps[i];
+    o.connect(og); og.connect(lp);
+    return o;
+  });
+  lp.connect(g); g.connect(masterGain());
+
+  const t = c.currentTime;
+  const sustain = (opts && opts.sustain !== undefined) ? opts.sustain : S.toneSustain;
+  /* Obwiednia wyłącznie na rampach wykładniczych od 0,0001, nigdy od zera:
+     setValueAtTime(0) daje skok wzmocnienia w jednej próbce, co słychać jako
+     trzask o szerokim widmie. Narastanie 12 ms jest poniżej progu, przy którym
+     ucho słyszy atak jako „miękki", a już wystarcza, by uniknąć trzasku. */
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5, t + 0.012);
+  let endsAt;
+  if (sustain) {
+    g.gain.exponentialRampToValueAtTime(0.26, t + 0.25);
+    endsAt = Infinity;
+  } else {
+    g.gain.exponentialRampToValueAtTime(0.2, t + 0.5);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
+    endsAt = t + 3.3;
+  }
+  oscs.forEach(o => { o.start(t); if (endsAt !== Infinity) o.stop(endsAt); });
+
+  active.set(idx, { oscs, g, sustain });
+  if (endsAt !== Infinity) {
+    soundingUntil = Math.max(soundingUntil, performance.now() + 3300);
+    setTimeout(() => { if (active.get(idx) && active.get(idx).g === g) active.delete(idx); renderStrings(); }, 3400);
+  } else {
+    soundingUntil = Infinity;
+  }
+  renderStrings();
+}
+
+function stopString(idx) {
+  const a = active.get(idx);
+  if (!a) return;
+  const c = audioCtx(), t = c.currentTime;
+  try {
+    a.g.gain.cancelScheduledValues(t);
+    a.g.gain.setValueAtTime(Math.max(a.g.gain.value, 0.0001), t);
+    a.g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    a.oscs.forEach(o => o.stop(t + 0.14));
+  } catch (_) {}
+  active.delete(idx);
+  if (!active.size) soundingUntil = performance.now() + 200;
+  renderStrings();
+}
+
+function stopAll() {
+  if (seqTimer) { clearTimeout(seqTimer); seqTimer = null; }
+  [...active.keys()].forEach(stopString);
+}
+
+function playSequence() {
+  stopAll();
+  const list = currentStrings();
+  let i = 0;
+  const step = () => {
+    if (i >= list.length) { seqTimer = null; return; }
+    playString(i, { sustain: false });
+    i++;
+    seqTimer = setTimeout(step, 1600);
+  };
+  step();
+}
+
+/* ====================== interfejs ====================== */
+function buildTicks() {
+  const frag = document.createDocumentFragment();
+  for (let c = -50; c <= 50; c += 5) {
+    const major = c % 25 === 0;
+    const t = document.createElement("div");
+    t.className = "tick " + (major ? "major" : "minor");
+    t.style.left = (50 + c) + "%";
+    frag.appendChild(t);
+    /* Podpisy tylko do ±25. Skrajne, przy ±50, leżą dokładnie na krawędzi
+       skali i połowa każdego z nich wychodzi poza kadr — kreski same niosą
+       tam wystarczającą informację. */
+    if (major && Math.abs(c) <= 25) {
+      const l = document.createElement("div");
+      l.className = "tick-lbl";
+      l.style.left = (50 + c) + "%";
+      l.textContent = c > 0 ? "+" + c : String(c);
+      frag.appendChild(l);
+    }
+  }
+  el.ticks.replaceChildren(frag);
+}
+
+function fillInstruments() {
+  el.inst.replaceChildren(...Object.entries(INSTRUMENTS).map(([k, v]) => {
+    const o = document.createElement("option"); o.value = k; o.textContent = v.label; return o;
+  }));
+  el.inst.value = S.inst;
+  fillTunings();
+}
+
+function fillTunings() {
+  const ts = INSTRUMENTS[S.inst].tunings;
+  el.tun.replaceChildren(...Object.entries(ts).map(([k, v]) => {
+    const o = document.createElement("option"); o.value = k; o.textContent = v.label; return o;
+  }));
+  if (!ts[S.tuning]) S.tuning = Object.keys(ts)[0];
+  el.tun.value = S.tuning;
+}
+
+function renderStrings() {
+  const list = currentStrings();
+  const frag = document.createDocumentFragment();
+  list.forEach((st, i) => {
+    const b = document.createElement("button");
+    b.className = "string";
+    b.type = "button";
+    if (active.has(i)) b.classList.add("sounding");
+    else if (S.mode === "manual" && S.selected === i) b.classList.add("target");
+    else if (S.mode === "auto" && S.target && S.target.index === i) b.classList.add("target");
+    const num = list.length - i;
+    const f = midiToHz(st.midi, S.a4);
+    const nn = noteOf(st.midi);
+    b.innerHTML =
+      '<span class="num">' + num + ". " + unitName() + "</span>" +
+      '<span class="nm">' + st.name + '<span style="font-size:.55em;color:var(--ink-dim)"> ' + nn.oct + "</span></span>" +
+      '<span class="hz">' + f.toFixed(2) + " Hz" +
+        (S.octave ? " · wzorzec " + (f * Math.pow(2, S.octave)).toFixed(1) : "") + "</span>";
+    b.addEventListener("click", () => {
+      S.selected = i;
+      if (S.mode === "manual") { updateTargetLabel(); }
+      playString(i);
+    });
+    frag.appendChild(b);
+  });
+  el.strings.replaceChildren(frag);
+}
+
+function updateTargetLabel() {
+  const u = unitName();
+  $("opt-auto").textContent = "Automatyczny (najbliższa " + u + ")";
+  $("opt-manual").textContent = "Wybrana " + u;
+  if (S.mode === "chromatic") { el.targetLbl.textContent = "Cel: chromatyczny (najbliższy półton)"; return; }
+  if (S.mode === "manual") {
+    const list = currentStrings();
+    const st = list[Math.min(S.selected, list.length - 1)];
+    const num = list.length - Math.min(S.selected, list.length - 1);
+    el.targetLbl.textContent = "Cel: " + num + ". " + u + " — " + st.name + noteOf(st.midi).oct;
+    return;
+  }
+  el.targetLbl.textContent = "Cel: automatyczny (najbliższa " + u + ")";
+}
+
+function nearestString(freq) {
+  const list = currentStrings();
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < list.length; i++) {
+    const d = Math.abs(1200 * Math.log2(freq / midiToHz(list[i].midi, S.a4)));
+    if (d < bd) { bd = d; bi = i; }
+  }
+  return { index: bi, string: list[bi], cents: 1200 * Math.log2(freq / midiToHz(list[bi].midi, S.a4)) };
+}
+
+function resolveTarget(freq) {
+  const list = currentStrings();
+  if (S.mode === "manual") {
+    const i = Math.min(S.selected, list.length - 1);
+    const st = list[i];
+    return { index: i, string: st, midi: st.midi, cents: 1200 * Math.log2(freq / midiToHz(st.midi, S.a4)) };
+  }
+  if (S.mode === "chromatic") {
+    const m = Math.round(hzToMidi(freq, S.a4));
+    const nn = noteOf(m);
+    return { index: -1, string: { name: nn.name, midi: m }, midi: m, cents: 1200 * Math.log2(freq / midiToHz(m, S.a4)) };
+  }
+  const r = nearestString(freq);
+  return { index: r.index, string: r.string, midi: r.string.midi, cents: r.cents };
+}
+
+function setIdle() {
+  el.meter.classList.add("idle");
+  el.note.textContent = "—";
+  el.note.classList.add("empty");
+  el.hz.textContent = "— Hz";
+  el.cents.textContent = "— ct";
+  el.verdict.textContent = S.gated ? "gra wzorzec" : (S.running ? "czekam na dźwięk" : "bezczynny");
+  el.verdict.style.color = "var(--ink-dim)";
+  el.needle.style.background = "var(--accent)";
+  S.target = null;
+}
+
+function render() {
+  const now = performance.now();
+  /* Odczyt trzyma się 1400 ms po ostatnim dobrym pomiarze. Krócej — wskazanie
+     gasłoby w trakcie wybrzmiewania struny, akurat gdy patrzy się na skalę.
+     Dłużej — po odłożeniu instrumentu stroik pokazywałby nieaktualny wynik. */
+  const fresh = S.freq > 0 && (now - S.lastGood) < 1400;
+
+  if (fresh) {
+    const t = resolveTarget(S.freq);
+    S.target = t;
+    const cents = t.cents;
+    const nn = noteOf(Math.round(hzToMidi(S.freq, S.a4)));
+    const disp = S.mode === "chromatic" ? noteOf(t.midi) : noteOf(t.string.midi);
+    el.meter.classList.remove("idle");
+    el.note.classList.remove("empty");
+    el.note.innerHTML = (S.mode === "chromatic" ? nn.name : t.string.name) +
+      '<span class="oct">' + disp.oct + "</span>";
+    el.hz.textContent = S.freq.toFixed(2) + " Hz";
+    el.cents.textContent = (cents >= 0 ? "+" : "") + cents.toFixed(1) + " ct";
+    el.thz.textContent = midiToHz(S.mode === "chromatic" ? t.midi : t.string.midi, S.a4).toFixed(2) + " Hz";
+
+    const a = Math.abs(cents);
+    /* Progi oceny: 3 centy to przyjęta granica słyszalności różnicy wysokości
+       dla dźwięków granych kolejno po sobie; 10 centów to już wyraźne bicie
+       w akordzie. Zielone pole na skali ma dokładnie te ±3 centy. */
+    let col, txt;
+    if (a <= 3) { col = "var(--ok)"; txt = "nastrojona"; }
+    else if (a <= 10) { col = "var(--warn)"; txt = cents < 0 ? "lekko za nisko" : "lekko za wysoko"; }
+    else { col = "var(--off)"; txt = cents < 0 ? "za nisko — napnij" : "za wysoko — poluzuj"; }
+    el.verdict.textContent = txt;
+    el.verdict.style.color = col;
+    el.needle.style.background = col;
+    S.shownCents += (Math.max(-49, Math.min(49, cents)) - S.shownCents) * 0.25;
+  } else {
+    setIdle();
+    S.shownCents += (0 - S.shownCents) * 0.12;
+  }
+
+  el.needle.style.left = (50 + S.shownCents) + "%";
+  el.sig.style.width = Math.min(100, Math.round(S.rms * 900)) + "%";
+  el.sig.style.background = fresh ? "var(--ok)" : "var(--ink-dim)";
+  renderStringsHighlight();
+  requestAnimationFrame(render);
+}
+
+let lastHighlight = "";
+function renderStringsHighlight() {
+  const key = (S.target ? S.target.index : -1) + "|" + S.mode + "|" + S.selected + "|" + [...active.keys()].join(",");
+  if (key !== lastHighlight) { lastHighlight = key; renderStrings(); }
+}
+
+/* Pętla analizy. Odstęp 55 ms to około 18 ramek na sekundę: przy 2–4 ms
+   liczenia zajmuje to poniżej 8% czasu procesora, a wskaźnik reaguje szybciej, niż
+   zdąży zareagować ręka na kołku. Rysowanie chodzi osobno, w requestAnimationFrame,
+   żeby wskazówka płynęła w 60 klatkach mimo rzadszego pomiaru. */
+function loop() {
+  const now = performance.now();
+  if (S.running && analyser && now - lastAnalysis > 55) {
+    lastAnalysis = now;
+    if (now < soundingUntil) {
+      S.rms = 0; S.gated = true; S.history = [];
+    } else {
+      S.gated = false;
+      analyser.getFloatTimeDomainData(buf);
+      const r = detect(buf, ctx.sampleRate);
+      S.rms = r.rms;
+      /* Próg wiarygodności 0,78 przepuszcza tylko ramki o wyraźnej okresowości.
+         Mediana z 5 ostatnich pomiarów (5 × 55 ms = 275 ms historii) usuwa
+         pojedyncze odskoki o oktawę, których średnia by nie usunęła, tylko
+         rozmazała na sąsiednie odczyty. */
+      if (r.freq > 0 && r.clarity > 0.78) {
+        S.history.push(r.freq);
+        if (S.history.length > 5) S.history.shift();
+        const sorted = [...S.history].sort((a, b) => a - b);
+        S.freq = sorted[(sorted.length / 2) | 0];
+        S.clarity = r.clarity;
+        S.lastGood = now;
+      }
+    }
+  }
+  setTimeout(loop, 20);
+}
+
+/* ====================== zdarzenia ====================== */
+el.mic.addEventListener("click", () => { S.running ? stopMic() : startMic(); });
+el.inst.addEventListener("change", () => { S.inst = el.inst.value; S.selected = 0; fillTunings(); renderStrings(); updateTargetLabel(); });
+el.tun.addEventListener("change", () => { S.tuning = el.tun.value; S.selected = 0; renderStrings(); updateTargetLabel(); });
+el.mode.addEventListener("change", () => { S.mode = el.mode.value; updateTargetLabel(); renderStrings(); });
+el.a4.addEventListener("input", () => {
+  const v = parseFloat(el.a4.value);
+  if (!isNaN(v) && v >= 392 && v <= 466) { S.a4 = v; renderStrings(); }
+});
+el.seq.addEventListener("click", playSequence);
+el.stop.addEventListener("click", stopAll);
+el.toneMode.addEventListener("click", () => {
+  S.toneSustain = !S.toneSustain;
+  el.toneMode.setAttribute("aria-pressed", String(S.toneSustain));
+  el.toneMode.textContent = "Tryb: " + (S.toneSustain ? "ciągły" : "szarpnięcie");
+  stopAll();
+});
+/* Przesunięcie o oktawę w górę jako ratunek dla małych głośników: dudnienia
+   między strojoną struną a wzorcem o oktawę wyżej słychać tak samo dobrze,
+   bo zachodzą między harmonicznymi, które się pokrywają. */
+el.oct.addEventListener("click", () => {
+  S.octave = (S.octave + 1) % 3;
+  el.oct.textContent = "Oktawa: " + (S.octave === 0 ? "jak struna" : "+" + S.octave);
+  el.oct.setAttribute("aria-pressed", String(S.octave > 0));
+  stopAll();
+  renderStrings();
+});
+const setVol = v => {
+  S.volume = Math.max(0, Math.min(1, v));
+  if (master) master.gain.value = S.volume;
+  el.volLbl.textContent = "głośność " + Math.round(S.volume * 100) + "%";
+};
+el.volUp.addEventListener("click", () => setVol(S.volume + 0.1));
+el.volDown.addEventListener("click", () => setVol(S.volume - 0.1));
+el.theme.addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const dark = cur ? cur === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+});
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, select")) return;
+  const n = parseInt(e.key, 10);
+  const list = currentStrings();
+  if (n >= 1 && n <= list.length) { S.selected = list.length - n; playString(list.length - n); }
+  if (e.key === " ") { e.preventDefault(); stopAll(); }
+});
+
+/* ====================== start ====================== */
+buildTicks();
+fillInstruments();
+renderStrings();
+updateTargetLabel();
+setIdle();
+setVol(0.6);
+note("Dotknij „Włącz mikrofon”, żeby mierzyć strój. Dźwięki wzorcowe działają bez mikrofonu.", false);
+requestAnimationFrame(render);
+loop();
+
+/* Rejestracja mechanizmu pracy bez sieci. Po pierwszym otwarciu strona zostaje
+   w pamięci podręcznej przeglądarki i aplikacja uruchamia się bez internetu —
+   co w przypadku stroika jest regułą, a nie wyjątkiem: stroi się w sali prób,
+   za kulisami, w lesie. */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+
+})();
+</script>
+</body>
+</html>
