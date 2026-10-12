@@ -69,6 +69,8 @@
 }
 
 *{box-sizing:border-box}
+/* Reguły klasowe biją [hidden] z arkusza przeglądarki. */
+[hidden]{display:none !important}
 html,body{margin:0}
 body{
   background:var(--bg);
@@ -261,6 +263,42 @@ h2{font-family:var(--font-display);font-size:15px;font-weight:700;margin:0 0 10p
 ul.notes{margin:0;padding-left:18px;font-size:12.5px;color:var(--ink-dim);display:flex;flex-direction:column;gap:5px}
 ul.notes b{color:var(--ink);font-weight:600}
 
+/* ---- pomoc otwierana na żądanie ---- */
+/* Zwykły element details zamiast własnego przełącznika: działa bez
+   JavaScriptu, obsługuje klawiaturę i czytniki ekranu sam z siebie. */
+details.help{padding:0;overflow:hidden}
+details.help > summary{
+  list-style:none;
+  cursor:pointer;
+  /* 48 px wysokości to minimalny wygodny cel dotykowy na telefonie. */
+  padding:15px;
+  min-height:48px;
+  font-family:var(--font-display);
+  font-size:15px;
+  font-weight:700;
+  letter-spacing:-.01em;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  -webkit-user-select:none;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
+details.help > summary::-webkit-details-marker{display:none}
+details.help > summary::before{
+  content:"";
+  flex:none;
+  width:7px;height:7px;
+  border-right:2px solid var(--ink-dim);
+  border-bottom:2px solid var(--ink-dim);
+  transform:rotate(-45deg) translate(-1px,-1px);
+  transition:transform .15s;
+}
+details.help[open] > summary::before{transform:rotate(45deg) translate(-1px,-1px)}
+details.help > summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+details.help > ul.notes{padding:0 15px 15px 35px}
+
 @media (max-width:480px){
   /* justify-items:stretch, nie start — inaczej blok danych kurczy się do
      własnej zawartości i cztery pozycje układają się w pionie zamiast
@@ -381,8 +419,8 @@ ul.notes b{color:var(--ink);font-weight:600}
     </div>
   </div>
 
-  <div class="panel panel-flat" id="p-help">
-    <h2>Jak stroić</h2>
+  <details class="panel panel-flat help" id="p-help">
+    <summary>Jak stroić</summary>
     <ul class="notes">
       <li><b>Słuchem:</b> zagraj wzorzec, potem tę samą strunę na instrumencie. Dopóki słychać pulsowanie (bicie dudnień), struny są rozstrojone — pulsowanie zwalnia i zanika, gdy wysokości się zrównują.</li>
       <li><b>Mikrofonem:</b> szarp jedną strunę, poczekaj aż wskaźnik się uspokoi. Zielone pole to ±3 centy, czyli próg praktycznie niesłyszalny.</li>
@@ -394,7 +432,7 @@ ul.notes b{color:var(--ink);font-weight:600}
       <li><b>Ekran nie gaśnie</b> przy włączonym mikrofonie, żeby wskazówka była widoczna, gdy obie ręce są zajęte kołkiem. Po wyłączeniu mikrofonu telefon wraca do normalnego wygaszania.</li>
       <li><b>Niskie wzorce a głośniki:</b> membrana laptopa czy telefona przestaje przenosić w okolicach 150–200 Hz, więc wzorzec E1 i A1 jest tam cichy z fizyki, nie z błędu. Wzorce poniżej 80 Hz mają dlatego energię przesuniętą na wyższe harmoniczne — ucho odtwarza z nich właściwą wysokość. Na słuchawkach albo kolumnie z głośnikiem niskotonowym usłyszysz pełny dźwięk; na małym głośniku pewniejsza jest „Oktawa: +1”.</li>
     </ul>
-  </div>
+  </details>
 
 </div>
 
