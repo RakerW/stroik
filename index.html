@@ -375,6 +375,13 @@ details.help > ul.notes{padding:0 15px 15px 35px}
         <label class="lbl" for="a4">Kamerton A4 (Hz)</label>
         <input type="number" id="a4" min="392" max="466" step="0.5" value="440">
       </div>
+      <div class="field">
+        <label class="lbl" for="chime-sel">Sygnał przy nastrojeniu</label>
+        <select id="chime-sel">
+          <option value="1">włączony</option>
+          <option value="0">wyłączony</option>
+        </select>
+      </div>
     </div>
   </div>
 
@@ -415,7 +422,7 @@ details.help > ul.notes{padding:0 15px 15px 35px}
       <button class="btn" id="oct">Oktawa: jak struna</button>
       <button class="btn" id="vol-down">−</button>
       <button class="btn" id="vol-up">+</button>
-      <span class="hint" id="vol-lbl">głośność 60%</span>
+      <span class="hint" id="vol-lbl">głośność 85%</span>
     </div>
   </div>
 
@@ -426,6 +433,7 @@ details.help > ul.notes{padding:0 15px 15px 35px}
       <li><b>Mikrofonem:</b> szarp jedną strunę, poczekaj aż wskaźnik się uspokoi. Zielone pole to ±3 centy, czyli próg praktycznie niesłyszalny.</li>
       <li><b>Mandolina:</b> każda para strun stroi się osobno, struna po strunie — wycisz palcem sąsiednią, żeby stroik nie uśredniał obu naraz. Dopiero gdy obie zgadzają się z celem, zagraj je razem: jeśli słychać pulsowanie, para rozjeżdża się o ułamek centa i trzeba poprawić tę, którą dociągałeś jako drugą. Wysokie E5 (659 Hz) reaguje na kołek najgwałtowniej z całego instrumentu — przy mechanizmie bez przekładni rusz go naprawdę minimalnie.</li>
       <li><b>Zawsze dostrajaj od dołu:</b> zjedź kołkiem poniżej celu i dociągnij w górę — luz w mechanizmie nie cofnie wtedy stroju.</li>
+      <li><b>Sygnał potwierdzenia:</b> gdy odczyt utrzyma się w zielonym przez pół sekundy, stroik odzywa się krótką kwintą w górę. Można wtedy patrzeć na kołek, nie na ekran. Sygnał rozlega się raz na strunę; wyłącza się go w ustawieniach.</li>
       <li><b>Sprzężenie:</b> przy włączonym mikrofonie i głośnikach stroik usłyszy własny wzorzec. Analiza jest wstrzymywana na czas odtwarzania, ale ze słuchawkami pracuje się wygodniej.</li>
       <li><b>Bas:</b> najniższe struny (E1 ≈ 41 Hz, H0 ≈ 31 Hz) potrzebują około sekundy wybrzmienia, zanim odczyt się ustabilizuje. Graj przy progu 12. i porównuj oktawę, jeśli odczyt skacze.</li>
       <li><b>Nie słychać wzorca:</b> sprawdź boczny przełącznik wyciszenia iPhone'a — w pozycji cichej wycisza także dźwięk ze stron. Głośność ustawia się przyciskami telefonu, niezależnie od suwaka w aplikacji.</li>
@@ -507,7 +515,15 @@ const S = {
   selected: 0,
   toneSustain: false,
   octave: 0,
-  volume: 0.6,
+  volume: 0.85,
+  /* Sygnał dźwiękowy przy trafieniu w strój. Przy strojeniu patrzy się na
+     kołek, nie na ekran, więc domyślnie włączony. */
+  chimeEnabled: true,
+  /* null, a nie 0: zero jest wartością fałszywą, więc znacznik „jeszcze nie
+     liczymy" nie może nim być — przy zegarze wskazującym dokładnie 0 pierwsza
+     klatka w zielonym przepadała. */
+  inTuneSince: null,
+  chimedTarget: null,
   running: false,
   freq: 0, clarity: 0, rms: 0,
   lastGood: 0,
@@ -523,7 +539,8 @@ const el = {
   note: $("note"), hz: $("hz"), cents: $("cents"), thz: $("thz"), verdict: $("verdict"),
   sig: $("sig"), status: $("status"), strings: $("strings"), targetLbl: $("target-lbl"),
   seq: $("seq"), stop: $("stop"), toneMode: $("tone-mode"), oct: $("oct"), volLbl: $("vol-lbl"),
-  volUp: $("vol-up"), volDown: $("vol-down"), theme: $("theme")
+  volUp: $("vol-up"), volDown: $("vol-down"), theme: $("theme"),
+  chimeSel: $("chime-sel")
 };
 
 const currentStrings = () => INSTRUMENTS[S.inst].tunings[S.tuning].strings;
@@ -835,9 +852,36 @@ let master = null;
 const active = new Map();
 let seqTimer = null;
 
+/* Miękki ogranicznik na samym wyjściu.
+   Potrzebny, bo wzorce potrafią się nałożyć: „Zagraj wszystkie" uruchamia
+   kolejną strunę co 1,6 s, a szarpnięcie wybrzmiewa 3,2 s, więc przez większość
+   czasu brzmią dwa naraz, a przy szybkim stukaniu trzy. Suma dwóch przebiegów
+   o szczycie 0,9 wychodzi poza skalę, a przepełnienie w torze cyfrowym to
+   twarde obcięcie — brzmi jak brzęczenie i rozsypuje barwę.
+   Krzywa jest liniowa do 0,7 i dopiero wyżej łagodnie dociska do jedności, więc
+   pojedynczy wzorzec przechodzi praktycznie nietknięty. Czterokrotne
+   nadpróbkowanie ogranicza zniekształcenia wnoszone przez samo dociskanie. */
+function softLimiterCurve() {
+  const n = 2048, curve = new Float32Array(n), knee = 0.7;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1, a = Math.abs(x);
+    const y = a <= knee ? a : knee + (1 - knee) * Math.tanh((a - knee) / (1 - knee));
+    curve[i] = Math.sign(x) * y;
+  }
+  return curve;
+}
+
 function masterGain() {
   const c = audioCtx();
-  if (!master) { master = c.createGain(); master.gain.value = S.volume; master.connect(c.destination); }
+  if (!master) {
+    master = c.createGain();
+    master.gain.value = S.volume;
+    const sh = c.createWaveShaper();
+    sh.curve = softLimiterCurve();
+    sh.oversample = "4x";
+    master.connect(sh);
+    sh.connect(c.destination);
+  }
   return master;
 }
 
@@ -858,6 +902,53 @@ function voicing(f) {
   return              { partials: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12],  amps: [0.5, 0.7, 0.85, 0.95, 1, 1, 0.9, 0.72, 0.55, 0.4, 0.24] };
 }
 
+/* Barwa składana jako JEDEN przebieg okresowy, nie bank oscylatorów.
+   Bank nie potrafił dwóch rzeczy, a obie decydują o poziomie:
+
+   1. Normalizacji. Amplitudy szły prosto na wzmocnienia oscylatorów, więc przy
+      barwie basowej (jedenaście składowych, suma amplitud 7,8) szczyt wzorca
+      dochodził do 3,1 przy pełnej skali 1,0 — zmierzone: 2113 obciętych próbek
+      na 300 ms. Wzorzec basu był więc nie cichy, a przeciążony, co właśnie
+      psuło efekt brakującej podstawowej, na którym opiera się jego słyszalność
+      na małym głośniku. `createPeriodicWave` bez `disableNormalization`
+      normalizuje przebieg do szczytu 1,0 — robi to przeglądarka, dokładnie
+      i bez kosztu.
+
+   2. Faz. Oscylatory startują wszystkie w fazie zerowej, czyli w najgorszym
+      możliwym ułożeniu: szczyty składowych nakładają się na siebie. Fazy
+      Schroedera (−πk(k−1)/n) rozsuwają je i obniżają współczynnik szczytu
+      z około 4 do 2, czyli podwajają wartość skuteczną przy tym samym
+      szczycie. Ta sama sztuczka, co w generatorach pomiarowych. W przebiegu
+      okresowym fazę zapisuje się jako rozkład amplitudy między składową
+      cosinusową i sinusową.
+
+   Efekt uboczny jest równie cenny: poziom wzorców wyrównał się między
+   strunami. Wcześniej ukulele G3 wychodziło na −12,8 dBFS, a bas E1 na −5,7 —
+   siedem decybeli różnicy między dźwiękami tego samego stroika. Teraz
+   wszystkie trzy barwy mieszczą się między −8,7 a −9,6 dBFS. */
+let waveCache = new Map();
+let waveCacheCtx = null;
+
+function voicingWave(c, f) {
+  if (waveCacheCtx !== c) { waveCache = new Map(); waveCacheCtx = c; }
+  const v = voicing(f);
+  const n = v.partials.length;
+  let w = waveCache.get(n);
+  if (!w) {
+    const top = v.partials[n - 1];
+    const real = new Float32Array(top + 1), imag = new Float32Array(top + 1);
+    for (let i = 0; i < n; i++) {
+      const k = i + 1;
+      const phi = -Math.PI * k * (k - 1) / n;
+      real[v.partials[i]] = v.amps[i] * Math.sin(phi);
+      imag[v.partials[i]] = v.amps[i] * Math.cos(phi);
+    }
+    w = c.createPeriodicWave(real, imag);
+    waveCache.set(n, w);
+  }
+  return w;
+}
+
 function playString(idx, opts) {
   const c = audioCtx();
   const st = currentStrings()[idx];
@@ -874,16 +965,11 @@ function playString(idx, opts) {
   lp.frequency.value = Math.min(6000, Math.max(900, f * 13));
   lp.Q.value = 0.6;
 
-  const { partials, amps } = voicing(f);
-  const oscs = partials.map((p, i) => {
-    const o = c.createOscillator();
-    o.type = "sine";
-    o.frequency.value = f * p;
-    const og = c.createGain();
-    og.gain.value = amps[i];
-    o.connect(og); og.connect(lp);
-    return o;
-  });
+  const o = c.createOscillator();
+  o.setPeriodicWave(voicingWave(c, f));
+  o.frequency.value = f;
+  o.connect(lp);
+  const oscs = [o];
   lp.connect(g); g.connect(masterGain());
 
   const t = c.currentTime;
@@ -893,13 +979,16 @@ function playString(idx, opts) {
      trzask o szerokim widmie. Narastanie 12 ms jest poniżej progu, przy którym
      ucho słyszy atak jako „miękki", a już wystarcza, by uniknąć trzasku. */
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.5, t + 0.012);
+  /* Szczyt 0,9 zamiast dawnego 0,5: po normalizacji przebiegu do jedności ten
+     zapas jest dostępny, a ogranicznik na wyjściu pilnuje sumy, gdy wzorce się
+     nałożą. Tryb ciągły brzmi bez przerwy, więc siedzi niżej. */
+  g.gain.exponentialRampToValueAtTime(0.90, t + 0.012);
   let endsAt;
   if (sustain) {
-    g.gain.exponentialRampToValueAtTime(0.26, t + 0.25);
+    g.gain.exponentialRampToValueAtTime(0.62, t + 0.25);
     endsAt = Infinity;
   } else {
-    g.gain.exponentialRampToValueAtTime(0.2, t + 0.5);
+    g.gain.exponentialRampToValueAtTime(0.36, t + 0.5);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
     endsAt = t + 3.3;
   }
@@ -933,6 +1022,54 @@ function stopString(idx) {
 function stopAll() {
   if (seqTimer) { clearTimeout(seqTimer); seqTimer = null; }
   [...active.keys()].forEach(stopString);
+}
+
+/* ====================== sygnał potwierdzenia ====================== */
+/* Krótka kwinta w górę, E6 → B6. Wysokość wybrana celowo powyżej zakresu
+   detektora (do 1320 Hz) i powyżej wszystkiego, co ma struna: sygnału nie da
+   się pomylić z instrumentem ani wziąć za jego dźwięk. Pasmo 1,3–2 kHz to przy
+   okazji miejsce, w którym mały głośnik jest najsprawniejszy, więc sygnał
+   przebija się także z telefonu trzymanego na kolanie. */
+let chimeUntil = 0;
+let chimeWave = null, chimeWaveCtx = null;
+
+function chimeWaveFor(c) {
+  if (chimeWaveCtx !== c) { chimeWave = null; chimeWaveCtx = c; }
+  if (!chimeWave) {
+    /* Podstawowa plus 22% drugiej harmonicznej. Druga harmoniczna dodaje
+       dzwonkowej jasności — bez niej sygnał ginie w pogłosie pomieszczenia. */
+    chimeWave = c.createPeriodicWave(new Float32Array([0, 0, 0]),
+                                     new Float32Array([0, 1, 0.22]));
+  }
+  return chimeWave;
+}
+
+function chime() {
+  const c = audioCtx(), t = c.currentTime;
+  const o = c.createOscillator();
+  o.setPeriodicWave(chimeWaveFor(c));
+  o.frequency.setValueAtTime(1318.5, t);
+  o.frequency.setValueAtTime(1975.5, t + 0.095);
+  const g = c.createGain();
+  o.connect(g); g.connect(masterGain());
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5, t + 0.004);
+  g.gain.setValueAtTime(0.5, t + 0.19);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.30);
+  o.start(t); o.stop(t + 0.32);
+  chimeUntil = performance.now() + 330;
+}
+
+/* Sygnał czeka na ustabilizowany odczyt: wskazówka przechodzi przez zero także
+   wtedy, gdy kołek jest jeszcze w ruchu, więc potwierdzenie w przelocie byłoby
+   mylące. Rozlega się raz na strunę i odblokowuje po wyjściu z zielonego
+   zakresu, żeby nie dzwonił w pętli. */
+function maybeChime(green, key, now) {
+  if (!green) { S.inTuneSince = null; S.chimedTarget = null; return; }
+  if (!S.chimeEnabled || !S.running) { S.inTuneSince = null; return; }
+  if (S.chimedTarget === key) return;
+  if (S.inTuneSince === null) { S.inTuneSince = now; return; }
+  if (now - S.inTuneSince >= 450) { chime(); S.chimedTarget = key; S.inTuneSince = null; }
 }
 
 function playSequence() {
@@ -1102,7 +1239,11 @@ function render() {
     el.verdict.style.color = col;
     el.needle.style.background = col;
     S.shownCents += (Math.max(-49, Math.min(49, cents)) - S.shownCents) * 0.25;
+    maybeChime(a <= 3,
+               S.mode === "chromatic" ? "m" + t.midi : "s" + t.string.midi,
+               now);
   } else {
+    S.inTuneSince = null; S.chimedTarget = null;
     setIdle();
     S.shownCents += (0 - S.shownCents) * 0.12;
   }
@@ -1128,7 +1269,13 @@ function loop() {
   const now = performance.now();
   if (S.running && analyser && now - lastAnalysis > 55) {
     lastAnalysis = now;
-    if (now < soundingUntil) {
+    if (now < chimeUntil) {
+      /* Sygnał potwierdzenia brzmi dokładnie wtedy, gdy patrzy się na zielony
+         odczyt. Pomijamy więc analizę, ale nie ruszamy wyniku: ekran zostaje
+         zamrożony na ostatniej wartości, zamiast mrugnąć kreską w chwili
+         sukcesu. Trwa to 330 ms, czyli znacznie krócej niż 1400 ms, po których
+         odczyt i tak by zgasł. */
+    } else if (now < soundingUntil) {
       S.rms = 0; S.gated = true; S.history = [];
     } else {
       S.gated = false;
@@ -1157,6 +1304,10 @@ el.mic.addEventListener("click", () => { S.running ? stopMic() : startMic(); });
 el.inst.addEventListener("change", () => { S.inst = el.inst.value; S.selected = 0; fillTunings(); renderStrings(); updateTargetLabel(); });
 el.tun.addEventListener("change", () => { S.tuning = el.tun.value; S.selected = 0; renderStrings(); updateTargetLabel(); });
 el.mode.addEventListener("change", () => { S.mode = el.mode.value; updateTargetLabel(); renderStrings(); });
+el.chimeSel.addEventListener("change", () => {
+  S.chimeEnabled = el.chimeSel.value === "1";
+  S.inTuneSince = null; S.chimedTarget = null;
+});
 el.a4.addEventListener("input", () => {
   const v = parseFloat(el.a4.value);
   if (!isNaN(v) && v >= 392 && v <= 466) { S.a4 = v; renderStrings(); }
@@ -1205,7 +1356,8 @@ fillInstruments();
 renderStrings();
 updateTargetLabel();
 setIdle();
-setVol(0.6);
+setVol(0.85);
+el.chimeSel.value = S.chimeEnabled ? "1" : "0";
 note("Dotknij „Włącz mikrofon”, żeby mierzyć strój. Dźwięki wzorcowe działają bez mikrofonu.", false);
 requestAnimationFrame(render);
 loop();

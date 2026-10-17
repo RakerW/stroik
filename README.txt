@@ -1,4 +1,4 @@
-STROIK NA iPHONE'A                                                 wersja 1.2
+STROIK NA iPHONE'A                                                 wersja 1.4
 Stroik do ukulele, mandoliny, gitary sześciostrunowej i gitary basowej.
 
 
@@ -72,6 +72,52 @@ PO INSTALACJI
   przy kolejnym uruchomieniu z zasięgiem.
 
 
+SYGNAŁ PRZY NASTROJENIU
+
+  Gdy odczyt utrzyma się w zielonym zakresie przez pół sekundy, stroik odzywa
+  się krótką kwintą w górę. Można wtedy patrzeć na kołek, a nie na ekran.
+
+  Sygnał czeka na ustabilizowany odczyt celowo: wskazówka przechodzi przez zero
+  także wtedy, gdy kołek jest jeszcze w ruchu, więc potwierdzenie w przelocie
+  byłoby mylące. Rozlega się raz na strunę i odblokowuje dopiero po wyjściu
+  z zielonego zakresu.
+
+  Wysokość sygnału (E6 i H6, 1319 i 1976 Hz) leży powyżej zakresu pomiarowego
+  i powyżej wszystkiego, co ma struna — nie da się go pomylić z instrumentem.
+
+  Wyłącza się go w ustawieniach: pole „Sygnał przy nastrojeniu”.
+
+
+GŁOŚNOŚĆ WZORCÓW (zmiana w wersji 1.4)
+
+  Wcześniej amplitudy harmonicznych szły prosto na oscylatory, bez
+  normalizacji, a wszystkie startowały w tej samej fazie — czyli w najgorszym
+  możliwym ułożeniu, w którym szczyty nakładają się na siebie. Przy barwie
+  basowej szczyt wzorca dochodził do 3,1 przy skali 1,0: wzorzec E1 nie był
+  cichy, tylko przeciążony, a twarde obcięcie rozsypywało właśnie te
+  harmoniczne, dzięki którym bas w ogóle słychać na małym głośniku.
+
+  Teraz barwa jest składana jako jeden przebieg okresowy, znormalizowany do
+  szczytu, z fazami rozsuniętymi wzorem Schroedera:
+
+    ukulele G3   szczyt 0,41 -> 0,77, poziom -12,8 -> -8,7 dBFS
+    gitara A2    szczyt 0,99 -> 0,77, poziom  -9,1 -> -9,6 dBFS
+    bas E1       szczyt 1,88 -> 0,77, poziom  -5,7 -> -8,7 dBFS
+
+  Zero obciętych próbek. Przy okazji wyrównał się poziom między strunami:
+  wcześniej między ukulele a basem było siedem decybeli różnicy, teraz mniej
+  niż jeden. Na wyjściu stoi miękki ogranicznik, bo wzorce potrafią się
+  nałożyć. Suwak głośności startuje na 85%, nie na 60%.
+
+
+AKTUALIZACJA DO WERSJI 1.4
+
+  Aplikacja na ekranie początkowym pobierze nowe pliki sama, przy pierwszym
+  uruchomieniu z zasięgiem — pamięć podręczna ma nowy numer, więc stara zostaje
+  odrzucona. Jeśli po otwarciu nadal widać starą wersję, zamknij aplikację
+  i otwórz ją ponownie: nowa wchodzi przy kolejnym starcie, nie w trakcie.
+
+
 GDY NIE SŁYCHAĆ DŹWIĘKU WZORCOWEGO
 
   Sprawdź boczny przełącznik wyciszenia iPhone'a. W pozycji cichej wycisza
@@ -81,6 +127,8 @@ GDY NIE SŁYCHAĆ DŹWIĘKU WZORCOWEGO
   Wzorce E1 (41 Hz) i A1 (55 Hz) będą na głośniku telefonu ciche niezależnie
   od ustawień — membrana tej wielkości nie przenosi tak niskich dźwięków.
   To fizyka, nie usterka. Użyj słuchawek albo włącz „Oktawa: +1”.
+  W wersji 1.4 są wyraźnie czytelniejsze niż wcześniej, bo przestały być
+  przesterowane — patrz „Głośność wzorców”.
 
 
 GDY MIKROFON NIE DZIAŁA

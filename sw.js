@@ -11,7 +11,7 @@
  * otwarciu. Dla stroika to właściwy kompromis — liczy się czas startu,
  * nie świeżość treści, która zmienia się raz na kilka miesięcy.
  */
-const CACHE = "stroik-v1.3";
+const CACHE = "stroik-v1.4";
 const FILES = [
   "./",
   "./index.html",
